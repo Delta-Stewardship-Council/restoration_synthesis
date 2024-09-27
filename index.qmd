@@ -1,0 +1,671 @@
+---
+title: "Delta vulnerability map"
+format: dashboard
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(dplyr)
+library(leaflet) # interactive maps
+library(plotly) # interactive plots
+library(sf)
+library(tidycensus)
+library(htmltools)
+library(purrr)
+```
+
+```{r, echo = F, results = "hide"}
+## switch to centroid points for all sites 
+## extract CES data (composite measures?) - good for social vulnerability
+## Add other layers? Heat islands, ???
+
+## ------------------------------------------------------- ##
+              # Adding centroids and boundary  ----
+## ------------------------------------------------------- ##
+
+# specify path to the Restoration Box folder
+boxpath <- "/Users/chen/Library/CloudStorage/Box-Box/NCEAS - Restoration/"
+
+# gpc <- st_read(paste0(boxpath, "data/sandbox/gpc3/gpc3_spatial.gpkg"))
+# 
+# gpc_layers <- st_layers(paste0(boxpath, "data/sandbox/gpc3/gpc3_spatial.gpkg"))
+# 
+# for(i in gpc_layers[["name"]]){
+#   print(i)
+#   temp <- st_read(paste0(boxpath, "data/sandbox/gpc3/gpc3_spatial.gpkg"), layer = i)
+#   temp <- st_transform(temp, '+proj=longlat +datum=WGS84')
+#   assign(i, temp)
+#   rm(temp)
+# }
+
+# read in the study boundary
+legal_eco <- st_read(file.path(boxpath, "data", "bay_delta_boundary", "StudyBoundaryFINAL.shp"))
+# get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+legal_eco_wgs84 <- st_transform(legal_eco, '+proj=longlat +datum=WGS84')
+
+# read in the centroids for the restoration centroids
+centroids <- read.csv(file.path(boxpath, "data", "composite_data", "step1_lookup.csv")) %>%
+  # remove centroids without longitude or latitude
+  dplyr::filter(!is.na(lon) | !is.na(lat)) %>%
+  # convert this into an sf object with valid long/lat coordinates
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(legal_eco_wgs84), remove = F)
+
+# separate out each agency
+cnra <- centroids %>%
+  dplyr::filter(agency == "cnra")
+
+cscc <- centroids %>%
+  dplyr::filter(agency == "cscc")
+
+sfbra <- centroids %>%
+  dplyr::filter(agency == "sfbra")
+
+cdfw <- centroids %>%
+  dplyr::filter(agency == "cdfw")
+
+ssjdc <- centroids %>%
+  dplyr::filter(agency == "ssjdc")
+
+## ------------------------------------------------------- ##
+                # Add metadata to sites ----
+## ------------------------------------------------------- ##
+
+# cnra <- merge(cnra, read.csv(paste0(boxpath, "data/sandbox/gpc3/cnra_atts.csv")), by = "nceas_id")
+# cscc <- merge(cscc, read.csv(paste0(boxpath, "data/sandbox/gpc3/cscc_atts.csv")), by = "nceas_id")
+# sfbra <- merge(sfbra, read.csv(paste0(boxpath, "data/sandbox/gpc3/sfbra_atts.csv")), by = "nceas_id")
+# cdfw <- merge(cdfw, read.csv(paste0(boxpath, "data/sandbox/gpc3/cdfw_atts.csv")), by = "nceas_id")
+# 
+# ssjdc_POINT <- merge(ssjdc_POINT, read.csv(paste0(boxpath, "data/sandbox/gpc3/ssjdc_atts.csv")), by = "nceas_id")
+# ssjdc_LINESTRING <- merge(ssjdc_LINESTRING, read.csv(paste0(boxpath, "data/sandbox/gpc3/ssjdc_atts.csv")), by = "nceas_id")
+# ssjdc_MULTILINESTRING <- merge(ssjdc_MULTILINESTRING, read.csv(paste0(boxpath, "data/sandbox/gpc3/ssjdc_atts.csv")), by = "nceas_id")
+# ssjdc_POLYGON <- merge(ssjdc_POLYGON, read.csv(paste0(boxpath, "data/sandbox/gpc3/ssjdc_atts.csv")), by = "nceas_id")
+# ssjdc_MULTIPOLYGON <- merge(ssjdc_MULTIPOLYGON, read.csv(paste0(boxpath, "data/sandbox/gpc3/ssjdc_atts.csv")), by = "nceas_id")
+
+# metric <- read.csv("data/scraped_data/cnra/clean_data/project_metric.csv")
+# colpal <- colorFactor(palette = RColorBrewer::brewer.pal(8, "Set1"), domain = sites_clip$Project.Metric)
+# 
+# sites_clip <- merge(sites_clip, metric, by.x = "ProjectNo_FK", by.y = "project_id", all.x = T)
+# sites_clip$popup_text <- paste(paste("Project_id:", sites_clip$ProjectNo_FK), 
+#                                paste("Type:", sites_clip$Project.Metric), 
+#                                paste("Acres:", sites_clip$Quantity), sep = "<br>")
+
+## ------------------------------------------------------- ##
+ # Spatial join with SOVI and CalEnviroScreen 4.0 metrics 
+## ------------------------------------------------------- ##
+
+svi <- read_sf(file.path(boxpath, "data", "sandbox", "SOVI", "CA_SOVI_theme_1.shp")) %>% 
+  select(c("AREA_SQMI", "E_TOTPOP", "RPL_THEME1", "RPL_THEME2", "RPL_THEME3", "RPL_THEME4", "RPL_THEMES"))
+
+ces <- read_sf(file.path(boxpath, "data", "sandbox",
+                         "Calenviroscreen", "calenviroscreen40shpf2021shp", "CES4 Final Shapefile.shp")) %>% 
+  select(c("CIscore", "CIscoreP"))
+
+dput(colnames(ces))
+
+## get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+ces_wgs <- st_transform(ces, crs = '+proj=longlat +datum=WGS84')
+
+## get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+# legal_eco_wgs <- st_transform(legal_eco, crs = st_crs(rest_sites))
+svi_wgs <- st_transform(svi, crs = '+proj=longlat +datum=WGS84')
+# frp_wgs <- st_transform(frp, crs = st_crs(rest_sites))
+
+##temporary workaround: remove spherical geometry (should probably be using a projected CRS in the future)
+sf::sf_use_s2(FALSE)
+## select census tracts that intersect with delta boundary
+svi_delta <- svi_wgs %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+ces_delta <- ces_wgs %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+# ## spatial join restoration projects and SVI datasets
+rest_svi_join <- st_join(cnra, svi_wgs, largest = T)
+rest_svi_ces_join <- st_join(rest_svi_join, ces_wgs, largest = T)
+
+## ------------------------------------------------------- ##
+                 # Wrangling for PCA  ----
+## ------------------------------------------------------- ##
+
+restlist <- list(cnra, sfbra, cscc, cdfw, ssjdc)
+rsj_num <- data.frame()
+
+## remove sticky geometry to be able to run PCA
+for(j in restlist){
+  temp_svi_join <- st_join(j, svi_wgs, largest = T)
+  temp_num <- sf::st_drop_geometry(rest_svi_ces_join[,c("AREA_SQMI", "E_TOTPOP", "RPL_THEME1", "RPL_THEME2", "RPL_THEME3", "RPL_THEME4", "RPL_THEMES", "CIscore", "CIscoreP")])
+  
+  rsj_num <- rbind(rsj_num, temp_num)
+}
+
+rsj_num <- rsj_num[complete.cases(rsj_num),]
+
+rsj_pca <- prcomp(rsj_num[,3:9], scale. = TRUE)
+
+```
+
+
+```{r, echo = F, results = "hide"}
+## ------------------------------------------------------- ##
+        # Adding more restoration relevant layers  ----
+## ------------------------------------------------------- ##
+
+# California Protected Areas Database (CPAD)
+cpad_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "cpad_2024a", "CPAD_2024a_Holdings.shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+```
+
+```{r, echo = F, results = "hide"}
+# California Conservation Easement Database (CCED)
+cced_delta <- st_read(file.path(boxpath, "data", "sandbox","restoration_relevant_layers",
+                          "cced_2024a", "CCED_2024a_Release.shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+```
+
+```{r, echo = F, results = "hide"}
+# Percent Protected Area in Census Tract
+
+# function that completely erases y from x (see st_difference help page)
+st_erase <- function(x, y) st_difference(x, st_make_valid(st_union(st_combine(y))))
+
+# combine the geometries and delete the polygon borders for cpad and cced
+protected_delta <- st_make_valid(st_union(st_combine(cpad_delta)))
+protected_delta2 <- st_make_valid(st_union(st_combine(cced_delta)))
+
+# unite the cpad and cced geometries together
+protected_delta3 <- st_union(protected_delta, protected_delta2)
+
+# erase the protected area polygons from census tracts
+protected_erased <- st_erase(svi_delta, protected_delta3)
+
+protected_erased_v2 <- protected_erased %>%
+  # create a unique id column for each census tract
+  dplyr::mutate(id = 1:n(),
+                # calculate the non-park area in each tract (square meters)
+                non_protected_area_m2 = as.vector(st_area(.))) %>%
+  # convert to regular data frame
+  as.data.frame() %>%
+  # select relevant columns
+  dplyr::select(id, non_protected_area_m2)
+
+percent_protected_tract_delta <- svi_delta %>%
+  # create a unique id column for each census tract
+  mutate(id = 1:n(),
+          # calculate the total area of each tract (square meters)
+         tract_area_m2 = as.vector(st_area(.))) %>%
+  # left-join with the non-protected area info
+  dplyr::left_join(protected_erased_v2) %>%
+  # calculate percent of each tract that is non-protected
+  dplyr::mutate(percent_non_protected = round((non_protected_area_m2/tract_area_m2)*100, digits = 1),
+                # calculate percent of each tract that is protected
+                percent_protected = round(100-percent_non_protected, digits = 1))
+
+```
+
+```{r, echo = F, results = "hide"}
+# Nationwide flood hazard data (NOAA)
+noaa_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "NFHL_06_20240730", 
+                          "NFHL_06_20240730.gdb"), layer = "S_Fld_Haz_Ar") %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84) %>%
+  # interpreting the flood zone designations
+  # see https://www.fema.gov/glossary/flood-zones
+  dplyr::filter(FLD_ZONE != "OPEN WATER" & FLD_ZONE != "AREA NOT INCLUDED") %>%
+  dplyr::mutate(ZONE_DESIGNATION = dplyr::case_when(
+    FLD_ZONE == "A" | FLD_ZONE == "A99" | FLD_ZONE == "AE" | FLD_ZONE == "AH" | 
+    FLD_ZONE == "AO" | FLD_ZONE == "V" | FLD_ZONE == "VE" ~ "Special Flood Hazard Area (SFHA), high-risk area",
+    FLD_ZONE == "D" ~ "undetermined",
+    FLD_ZONE == "X" ~ "Non-Special Flood Hazard Area, moderate- to low-risk area",
+    T ~ NA
+  ))
+
+# combining all the same zone designations into 1 geometry/shape so the dashboard can load faster
+noaa_delta_combined <- noaa_delta %>%
+  dplyr::group_by(ZONE_DESIGNATION) %>%
+  dplyr::summarize(SHAPE = st_union(SHAPE)) %>%
+  st_simplify(dTolerance = 0.0001, preserveTopology = TRUE)
+
+```
+
+```{r, echo = F, results = "hide"}  
+# Cleanup Sites (CalOEHHA)
+calOEHHA <- read.delim(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers",
+                                 "EnviroStorCleanupSites", "sites.txt"), sep = "\t") %>%
+  # convert this into an sf object with valid long/lat coordinates
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = st_crs(legal_eco_wgs84), remove = F)
+
+# select areas that intersect with delta boundary
+calOEHHA_delta <- calOEHHA[lengths(st_intersects(calOEHHA, legal_eco_wgs84))>0,] 
+
+rm(calOEHHA)
+```
+
+```{r, echo = F, results = "hide"}
+# Terrestrial Native Species Richness Summary (CDFW)
+terrest_rich_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "Statewide_Terrestrial_Native_Species_Richness_Summary_-_ACE_[ds1332]", 
+                          "Statewide_Terrestrial_Native_Species_Richness_Summary_-_ACE_[ds1332].shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+```
+
+```{r, echo = F, results = "hide"}
+# Aquatic Native Species Richness Summary (CDFW)
+aqua_rich_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "Aquatic_Native_Species_Richness_Summary_-_ACE_[ds2743]", 
+                          "Aquatic_Native_Species_Richness_Summary_-_ACE_[ds2743].shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+```
+
+```{r, echo = F, results = "hide"}
+# Terrestrial Connectivity (CDFW)
+terrest_conn_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "Terrestrial_Connectivity_-_ACE_[ds2734]", 
+                          "Terrestrial_Connectivity_-_ACE_[ds2734].shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+```
+
+```{r, echo = F, results = "hide"}
+# Terrestrial Significant Habitats Summary (CDFW)
+terrest_hab_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "Terrestrial_Significant_Habitats_Summary_-_ACE_[ds2721]", 
+                          "Terrestrial_Significant_Habitats_Summary_-_ACE_[ds2721].shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+```
+
+```{r, echo = F, results = "hide"}
+# Aquatic Significant Habitats Summary (CDFW)
+aqua_hab_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "Aquatic_Significant_Habitats_Summary_-_ACE_[ds2756]", 
+                          "Aquatic_Significant_Habitats_Summary_-_ACE_[ds2756].shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84)
+
+```
+
+```{r, echo = F, results = "hide"}
+# PLACES: Census Tract Data, 2023 release (CDC)
+places <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "PLACES_ Census Tract Data (GIS Friendly Format), 2023 release_20240821", 
+                          "geo_export_be2925ce-858b-4dac-84fa-2ba8e7cd743b.shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84')
+
+# select areas that intersect with delta boundary
+places_delta <- places[lengths(st_intersects(places, legal_eco_wgs84))>0,] 
+
+rm(places)
+```
+
+```{r, echo = F, results = "hide"}
+# Parks With Public Access (Trust for Public Land)
+parks_delta <- st_read(file.path(boxpath, "data", "sandbox", "restoration_relevant_layers", 
+                          "Parkserve_Shapefiles_05212024", 
+                          "Parkserve_Parks.shp")) %>%
+  # get everything in the same coordinate reference system (WGS84 = '+init=EPSG:4326')
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  # select areas that intersect with delta boundary
+  st_intersection(legal_eco_wgs84) %>%
+  # rename column names that got cut off 
+  # see the Parkserve_Parks.shp.xml 
+  dplyr::rename(Park_Size_Acres = Park_Size_) %>%
+  dplyr::rename(Park_Size_SQFT = Park_Size1) %>%
+  dplyr::rename(Park_Size_SQMeters = Park_Siz_1) %>%
+  # create a new column for square miles
+  dplyr::mutate(Park_Size_SQMiles = Park_Size_Acres/640, .after = Park_Size_Acres)
+```
+
+
+```{r}
+# Percent Park Area in Census Tract
+
+# function that completely erases y from x (see st_difference help page)
+st_erase <- function(x, y) st_difference(x, st_make_valid(st_union(st_combine(y))))
+
+# erase the park polygons from census tracts
+parks_erased <- st_erase(svi_delta, parks_delta)
+
+parks_erased_v2 <- parks_erased %>%
+  # create a unique id column for each census tract
+  dplyr::mutate(id = 1:n(),
+                # calculate the non-park area in each tract (square meters)
+                non_park_area_m2 = as.vector(st_area(.))) %>%
+  # convert to regular data frame
+  as.data.frame() %>%
+  # select relevant columns
+  dplyr::select(id, non_park_area_m2)
+
+percent_park_tract_delta <- svi_delta %>%
+  # create a unique id column for each census tract
+  mutate(id = 1:n(),
+          # calculate the total area of each tract (square meters)
+         tract_area_m2 = as.vector(st_area(.))) %>%
+  # left-join with the non-park area info
+  dplyr::left_join(parks_erased_v2) %>%
+  # calculate percent of each tract that is non-park
+  dplyr::mutate(percent_non_park = round((non_park_area_m2/tract_area_m2)*100, digits = 1),
+                # calculate percent of each tract that is park
+                percent_park = round(100-percent_non_park, digits = 1))
+```
+
+```{r, echo = F, results = "hide"}
+# Binning Overall Vulnerability
+
+# 0 to 0.2500 = low
+# 0.2501 to 0.5000 = medium-low
+# 0.5001 to 0.7500 = medium-high
+# 0.7501 to 1.0 = high
+
+svi_delta <- svi_delta %>%
+  dplyr::mutate(bins = dplyr::case_when(
+    RPL_THEMES >= 0 & RPL_THEMES < 0.2501 ~ "Low",
+    RPL_THEMES >= 0.2501 & RPL_THEMES < 0.5001 ~ "Medium-Low",
+    RPL_THEMES >= 0.5001 & RPL_THEMES < 0.7501 ~ "Medium-High",
+    RPL_THEMES >= 0.7501 & RPL_THEMES <= 1.0 ~ "High",
+    RPL_THEMES < 0 ~ "No Data"
+  ))
+
+```
+
+```{r, echo = F, results = "hide"}
+
+## ------------------------------------------------------- ##
+       # Spatial join with all sites and metrics 
+## ------------------------------------------------------- ##
+
+# list out the datasets we want to join to restoration sites
+datasets <- list(centroids, svi_wgs, ces_wgs, cpad_delta, cced_delta, percent_protected_tract_delta,
+                 noaa_delta, terrest_rich_delta, aqua_rich_delta,
+                 terrest_conn_delta, terrest_hab_delta, aqua_hab_delta, parks_delta, percent_park_tract_delta)
+
+centroids_metrics <- datasets %>%
+  # left-join the datasets iteratively
+  # for example, first it'll left-join centroids and svi_wgs
+  # then it'll take the result of that to left-join again to ces_wgs, and so on, etc.
+  purrr::reduce(st_join, largest = TRUE) %>%
+  # select only the columns of interest
+  dplyr::select(colnames(centroids), AREA_SQMI, E_TOTPOP, RPL_THEME1, RPL_THEME2,
+                RPL_THEME3, RPL_THEME4, RPL_THEMES, CIscore, CIscoreP,
+                UNIT_NAME, sitename, percent_protected, ZONE_DESIGNATION, NativeCoun, NtvAqRankS,
+                Connectivi, TerrHabRan, AqHabRank, Park_Name, percent_park) %>%
+  # convert to only data frame
+  as.data.frame() %>%
+  # drop the sticky geometry column
+  dplyr::select(-geometry) %>%
+  # rename columns
+  dplyr::rename(protected_land = UNIT_NAME) %>%
+  dplyr::rename(easement_site = sitename) %>%
+  dplyr::rename(flood_risk = ZONE_DESIGNATION) %>%
+  dplyr::rename(terrest_ntv_species_count = NativeCoun) %>%
+  dplyr::rename(aquatic_ntv_species_rank = NtvAqRankS) %>%
+  dplyr::rename(terrest_connectivity_rank = Connectivi) %>%
+  dplyr::rename(terrest_hab_rank = TerrHabRan) %>%
+  dplyr::rename(aquatic_hab_rank = AqHabRank) %>%
+  dplyr::rename(park_name = Park_Name) 
+
+# export results
+#write.csv(centroids_metrics, paste0("restoration_metrics_", Sys.Date(), ".csv"), row.names = FALSE)
+```
+
+```{r}
+## ------------------------------------------------------- ##
+                # Setting color palettes ----
+## ------------------------------------------------------- ##
+
+pal.themes.1 <- colorNumeric(palette = c("lemonchiffon", "orange", "brown"),
+                           domain = c(-1, 1))
+
+pal.themes.2 <- colorNumeric(palette = c("#c3f6f7", "steelblue", "mediumblue"),
+                           domain = c(-1, 1))
+
+pal.themes.3 <- colorNumeric(palette = c("#ffd1f7", "hotpink", "#752368"),
+                           domain = c(-1, 1))
+
+pal.themes.4 <- colorNumeric(palette = c("#f59d45", "#957ee0", "#25078a"),
+                           domain = c(-1, 1))
+
+legend_order <- factor(svi_delta$bins, levels = c("Low", "Medium-Low", "Medium-High", "High", "No Data"))
+
+pal.themes.5 <- colorFactor(palette = c("#ffffe7", "#d2edda", "#a7dbe1", "#96b0d5", "gray"),
+                            levels = c("Low", "Medium-Low", "Medium-High", "High", "No Data"), 
+                            ordered = TRUE)
+
+pal.themes.ces <- colorNumeric(
+  palette = c("darkgreen", "lemonchiffon", "brown"),
+  domain = c(0, 100)
+)
+
+parks_pal <- colorNumeric(
+  palette = c("lemonchiffon", "lightgreen", "darkgreen"),
+  domain = c(0, 100)
+)
+
+noaa_pal <- colorFactor(c("burlywood1", "lightcoral", "darkgray"), noaa_delta_combined$ZONE_DESIGNATION)
+terrest_rich_pal <- colorNumeric(palette = "viridis", domain = terrest_rich_delta$NativeCoun)
+aqua_rich_pal <- colorNumeric(palette = c("skyblue", "royalblue"), domain = aqua_rich_delta$NtvAqRankS)
+terrest_conn_pal <- colorNumeric(palette = "Set1", domain = terrest_conn_delta$Connectivi)
+terrest_hab_pal <- colorNumeric(palette = "Set2", domain = terrest_hab_delta$TerrHabRan)
+aqua_hab_pal <- colorNumeric(palette = "Accent", domain = aqua_hab_delta$AqHabRank)
+places_pal <- colorNumeric(palette = "Purples", domain = places_delta$mhlth_crud)
+protected_pal <- colorNumeric(palette = "Reds", domain = percent_protected_tract_delta$percent_protected)
+```
+
+# Page 1
+
+```{r}
+#| title: "Map"
+## ------------------------------------------------------- ##
+                # Making Leaflet map ----
+## ------------------------------------------------------- ##
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron, group = "Grey background") %>%
+  addProviderTiles("Esri.WorldImagery", group = "Imagery") %>% 
+  addPolygons(group = "Socio-economic Status (CDC)", data = svi_delta,
+              color = "gray", fillColor = ~pal.themes.1(RPL_THEME1), weight = 1, fillOpacity = .7,
+              label = ~htmlEscape(paste("Socio-economic status:", RPL_THEME1))) %>%
+  addPolygons(group = "Household Characteristics (CDC)", data = svi_delta,
+              color = "gray", fillColor = ~pal.themes.2(RPL_THEME2), weight = 1, fillOpacity = .7,
+              label = ~htmlEscape(paste("Household characteristics:", RPL_THEME2))) %>%
+  addPolygons(group = "Racial & Ethnic Minority Status (CDC)", data = svi_delta,
+              color = "gray", fillColor = ~pal.themes.3(RPL_THEME3), weight = 1, fillOpacity = .7,
+              label = ~htmlEscape(paste("Racial and ethnic minority status:", RPL_THEME3))) %>%
+  addPolygons(group = "Housing Type & Transportation (CDC)", data = svi_delta,
+              color = "gray", fillColor = ~pal.themes.4(RPL_THEME4), weight = 1, fillOpacity = .7,
+              label = ~htmlEscape(paste("Housing type and transportation:", RPL_THEME4))) %>%
+  addPolygons(group = "Overall Vulnerability (CDC)", data = svi_delta,
+              color = "gray", fillColor = ~pal.themes.5(bins), weight = 1, fillOpacity = .7,
+              label = ~htmlEscape(paste0("Overall vulnerability: ", RPL_THEMES,", ", bins))) %>%
+  addLegend(group = "Overall Vulnerability (CDC)", data = svi_delta,
+            position = "bottomleft", pal = pal.themes.5, values = legend_order,
+            title = "Overall Vulnerability") %>%
+  addPolygons(group = "Cleanup Sites Score (CES 4.0)", data = ces_delta, 
+              color = "gray", fillColor = ~pal.themes.ces(CIscore), weight = 1, fillOpacity = .8,
+              label = ~htmlEscape(paste("Cleanup sites score:", CIscore))) %>%
+  addPolygons(data = legal_eco_wgs84, 
+              color = "black", fillOpacity = 0, weight = 1) %>% 
+  addCircleMarkers(group = "CNRA", data = cnra,
+                   opacity = .8, fillOpacity = 0.5, weight = 2, color = "blue", radius = 7,
+                   label = ~htmlEscape(paste("CNRA:", project_title))) %>%
+  addCircleMarkers(group = "SFBRA", data = sfbra,
+                   opacity = .8, fillOpacity = 0.5, weight = 2, color = "red", radius = 7,
+                   label = ~htmlEscape(paste("SFBRA:", project_title))) %>%
+  addCircleMarkers(group = "CSCC", data = cscc,
+                   opacity = .8, fillOpacity = 0.5, weight = 2, color = "limegreen", radius = 7,
+                   label = ~htmlEscape(paste("CSCC:", project_title))) %>%
+  addCircleMarkers(group = "CDFW", data = cdfw,
+                   opacity = .8, fillOpacity = 0.5, weight = 2, color = "blueviolet", radius = 7,
+                   label = ~htmlEscape(paste("CDFW:", project_title))) %>%
+  addCircleMarkers(group = "SSJDC", data = ssjdc,
+                   opacity = .8, fillOpacity = 0.5, weight = 2, color = "darkorange", radius = 7,
+                   label = ~htmlEscape(paste("SSJDC:", project_title))) %>%
+  # adding more restoration relevant layers
+  addPolygons(group = "California Protected Areas Database (CPAD)", data = cpad_delta,
+              opacity = .5, weight = 1, color = "forestgreen",
+              label = ~htmlEscape(paste("Name of the protected land:", UNIT_NAME))) %>%
+  addPolygons(group = "California Conservation Easement Database (CCED)", data = cced_delta,
+              opacity = .5, weight = 1, color = "turquoise",
+              label = ~htmlEscape(paste("Site name:", sitename))) %>%
+  addPolygons(group = "Percent of Protected Area in Census Tract", data = percent_protected_tract_delta,
+              opacity = .5, weight = 1, color = "gray", fillColor = ~protected_pal(percent_protected), 
+              label = ~htmlEscape(paste("Percent of protected area in census tract:", percent_protected))) %>%
+  addPolygons(group = "Nationwide flood hazard (NOAA)", data = noaa_delta_combined,
+              opacity = .5, weight = 1, color = ~noaa_pal(ZONE_DESIGNATION),
+              label = ~htmlEscape(paste("Zone designation:", ZONE_DESIGNATION))) %>%
+  addCircleMarkers(group = "Cleanup Sites (CalOEHHA)", data = calOEHHA_delta,
+                   opacity = 1, weight = 0.5, color = "tan", radius = 5,
+                   label = ~htmlEscape(paste("Cleanup site:", ADDRESS))) %>%
+  addPolygons(group = "Terrestrial Native Species Richness (CDFW)", data = terrest_rich_delta,
+              opacity = .8, weight = 1, color = "gray", fillColor = ~terrest_rich_pal(NativeCoun),
+              label = ~htmlEscape(paste("Native count:", NativeCoun))) %>%
+  addPolygons(group = "Aquatic Native Species Richness (CDFW)", data = aqua_rich_delta,
+              opacity = .8, weight = 1, color = "gray", fillColor = ~aqua_rich_pal(NtvAqRankS),
+              label = ~htmlEscape(paste("Native aquatic species rank:", NtvAqRankS))) %>%
+  addPolygons(group = "Terrestrial Connectivity (CDFW)", data = terrest_conn_delta,
+              opacity = .8, weight = 1, color = "gray", fillColor = ~terrest_conn_pal(Connectivi),
+              label = ~htmlEscape(paste("Connectivity rank:", Connectivi))) %>%
+  addPolygons(group = "Terrestrial Significant Habitats Summary (CDFW)", data = terrest_hab_delta,
+              opacity = .8, weight = 1, color = "gray", fillColor = ~terrest_hab_pal(TerrHabRan),
+              label = ~htmlEscape(paste("Significant terrestrial habitat rank:", TerrHabRan))) %>%
+  addPolygons(group = "Aquatic Significant Habitats Summary (CDFW)", data = aqua_hab_delta,
+              opacity = .8, weight = 1, color = "gray", fillColor = ~aqua_hab_pal(AqHabRank),
+              label = ~htmlEscape(paste("Significant aquatic habitat rank:", AqHabRank))) %>%
+  addCircleMarkers(group = "PLACES: Census Tract Data, 2023 release (CDC)", data = places_delta,
+                   opacity = 1, weight = 0.5, color = ~places_pal(mhlth_crud), radius = 5,
+                   label = ~htmlEscape(paste("
+Model-based estimate for crude prevalence of frequent mental distress among adults, 2022:", mhlth_crud))) %>%
+    addPolygons(group = "Percent of Park Area in Census Tract", data = percent_park_tract_delta,
+              opacity = .5, weight = 1, color = "gray", fillColor = ~parks_pal(percent_park), 
+              label = ~htmlEscape(paste("Percent of park area in census tract:", percent_park))) %>%
+  addPolygons(group = "Parks With Public Access (Trust for Public Land)", data = parks_delta,
+              opacity = .5, weight = 1, color = "darkseagreen",
+              label = ~htmlEscape(paste("Park name:", Park_Name))) %>%
+  addLayersControl(
+    baseGroups = c("Grey background", "Imagery"),
+    overlayGroups = c("CNRA",
+                      "SFBRA",
+                      "CSCC",
+                      "CDFW",
+                      "SSJDC",
+                      "Socio-economic Status (CDC)",
+                      "Household Characteristics (CDC)",
+                      "Racial & Ethnic Minority Status (CDC)",
+                      "Housing Type & Transportation (CDC)",
+                      "Overall Vulnerability (CDC)",
+                      "Cleanup Sites Score (CES 4.0)",
+                      "California Protected Areas Database (CPAD)",
+                      "California Conservation Easement Database (CCED)",
+                      "Percent of Protected Area in Census Tract",
+                      "Nationwide flood hazard (NOAA)",
+                      "Cleanup Sites (CalOEHHA)",
+                      "Terrestrial Native Species Richness (CDFW)",
+                      "Aquatic Native Species Richness (CDFW)",
+                      "Terrestrial Connectivity (CDFW)",
+                      "Terrestrial Significant Habitats Summary (CDFW)",
+                      "Aquatic Significant Habitats Summary (CDFW)",
+                      "PLACES: Census Tract Data, 2023 release (CDC)",
+                      "Parks With Public Access (Trust for Public Land)",
+                      "Percent of Park Area in Census Tract"),
+    options = layersControlOptions(collapsed = FALSE)) %>%
+  # hide these groups by default
+  hideGroup(c("CNRA",
+              "SFBRA",
+              "CSCC",
+              "CDFW",
+              "SSJDC",
+              "Socio-economic Status (CDC)",
+              "Household Characteristics (CDC)",
+              "Racial & Ethnic Minority Status (CDC)",
+              "Housing Type & Transportation (CDC)",
+              "Overall Vulnerability (CDC)",
+              "Cleanup Sites Score (CES 4.0)",
+              "California Protected Areas Database (CPAD)",
+              "California Conservation Easement Database (CCED)",
+              "Percent of Protected Area in Census Tract",
+              "Nationwide flood hazard (NOAA)",
+              "Cleanup Sites (CalOEHHA)",
+              "Terrestrial Native Species Richness (CDFW)",
+              "Aquatic Native Species Richness (CDFW)",
+              "Terrestrial Connectivity (CDFW)",
+              "Terrestrial Significant Habitats Summary (CDFW)",
+              "Aquatic Significant Habitats Summary (CDFW)",
+              "PLACES: Census Tract Data, 2023 release (CDC)",
+              "Parks With Public Access (Trust for Public Land)",
+              "Percent of Park Area in Census Tract"))
+
+```
+
+# Page 2
+
+## Row
+
+```{r}
+#| title: "Benefits"
+benefits <- data.frame(SV = c(rep("Disadvantaged",6),rep("Non-disadvantaged",6)),
+                       variable = rep(c("Flood protection", "Education",
+                                        "Workforce Devlopment", "Recreation",
+                                        "Wildlife habitat", "Water quality"), 2, each = T),
+                       value = c(80, 60, 75, 60, 95, 45,
+                                 70, 80, 65, 61, 90, 60))
+
+plotly::ggplotly(ggplot(benefits, aes(x = variable, y = value, fill = SV)) + 
+                   geom_bar(stat = "identity", position = "dodge") + 
+                   coord_flip() +
+                   labs(y = "Score", x = NULL, title = "Benefits", 
+                        subtitle = "Data is fictional. Use for proof of concept only") +
+                   theme(legend.position = "bottom") + theme_bw())
+
+```
+
+```{r}
+set.seed(1)
+grants_ts <- data.frame(x = 1995:2021,
+                        y = runif(n = 27, min = 0, max = 100))
+
+plotly::ggplotly(ggplot(grants_ts, aes(x = x, y = y)) + geom_bar(stat = "identity") +
+  labs(x = "Year", y = "Project acreage/1000") + theme_bw())
+
+```
+
+## Row
+
+```{r}
+#| title: "PCA biplot"
+biplot(rsj_pca)
+```
+
+```{r}
+#| title: "Corrplot"
+corrplot::corrplot(cor(rsj_num), type = "upper", method = "number")
+```
