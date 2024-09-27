@@ -394,7 +394,18 @@ svi_delta <- svi_delta %>%
     RPL_THEMES >= 0.5001 & RPL_THEMES < 0.7501 ~ "Medium-High",
     RPL_THEMES >= 0.7501 & RPL_THEMES <= 1.0 ~ "High",
     RPL_THEMES < 0 ~ "No Data"
-  ))
+  )) %>%
+  # replacing "-999.0000" with real NA values for the CDC theme columns
+  dplyr::mutate(RPL_THEME1 = na_if(RPL_THEME1, -999.0000),
+                RPL_THEME2 = na_if(RPL_THEME2, -999.0000),
+                RPL_THEME3 = na_if(RPL_THEME3, -999.0000),
+                RPL_THEME4 = na_if(RPL_THEME4, -999.0000),
+                RPL_THEMES = na_if(RPL_THEMES, -999.0000))
+
+ces_delta <- ces_delta %>%
+  # replacing "-999.00000000" with real NA values
+  dplyr::mutate(CIscore = na_if(CIscore, -999.00000000),
+                CIscoreP = na_if(CIscoreP, -999.00000000))
 
 ```
 
@@ -444,16 +455,20 @@ centroids_metrics <- datasets %>%
 ## ------------------------------------------------------- ##
 
 pal.themes.1 <- colorNumeric(palette = c("lemonchiffon", "orange", "brown"),
-                           domain = c(-1, 1))
+                           domain = svi_delta$RPL_THEME1,
+                           na.color = NA)
 
 pal.themes.2 <- colorNumeric(palette = c("#c3f6f7", "steelblue", "mediumblue"),
-                           domain = c(-1, 1))
+                           domain = svi_delta$RPL_THEME2,
+                           na.color = NA)
 
 pal.themes.3 <- colorNumeric(palette = c("#ffd1f7", "hotpink", "#752368"),
-                           domain = c(-1, 1))
+                           domain = svi_delta$RPL_THEME3,
+                           na.color = NA)
 
-pal.themes.4 <- colorNumeric(palette = c("#f59d45", "#957ee0", "#25078a"),
-                           domain = c(-1, 1))
+pal.themes.4 <- colorNumeric(palette = c("#d6c7fc", "#957ee0", "#25078a"),
+                           domain = svi_delta$RPL_THEME4,
+                           na.color = NA)
 
 legend_order <- factor(svi_delta$bins, levels = c("Low", "Medium-Low", "Medium-High", "High", "No Data"))
 
@@ -462,21 +477,22 @@ pal.themes.5 <- colorFactor(palette = c("#ffffe7", "#d2edda", "#a7dbe1", "#96b0d
                             ordered = TRUE)
 
 pal.themes.ces <- colorNumeric(
-  palette = c("darkgreen", "lemonchiffon", "brown"),
-  domain = c(0, 100)
+  palette = c("brown", "lemonchiffon", "darkgreen"),
+  domain = ces_delta$CIscore,
+  na.color = NA
 )
 
 parks_pal <- colorNumeric(
   palette = c("lemonchiffon", "lightgreen", "darkgreen"),
-  domain = c(0, 100)
+  domain = percent_park_tract_delta$percent_park
 )
 
 noaa_pal <- colorFactor(c("burlywood1", "lightcoral", "darkgray"), noaa_delta_combined$ZONE_DESIGNATION)
 terrest_rich_pal <- colorNumeric(palette = "viridis", domain = terrest_rich_delta$NativeCoun)
-aqua_rich_pal <- colorNumeric(palette = c("skyblue", "royalblue"), domain = aqua_rich_delta$NtvAqRankS)
-terrest_conn_pal <- colorNumeric(palette = "Set1", domain = terrest_conn_delta$Connectivi)
-terrest_hab_pal <- colorNumeric(palette = "Set2", domain = terrest_hab_delta$TerrHabRan)
-aqua_hab_pal <- colorNumeric(palette = "Accent", domain = aqua_hab_delta$AqHabRank)
+aqua_rich_pal <- colorFactor(palette = c("skyblue", "royalblue"), domain = aqua_rich_delta$NtvAqRankS)
+terrest_conn_pal <- colorFactor(palette = "Set1", domain = terrest_conn_delta$Connectivi)
+terrest_hab_pal <- colorFactor(palette = "Set2", domain = terrest_hab_delta$TerrHabRan)
+aqua_hab_pal <- colorFactor(palette = "Accent", domain = aqua_hab_delta$AqHabRank)
 places_pal <- colorNumeric(palette = "Purples", domain = places_delta$mhlth_crud)
 protected_pal <- colorNumeric(palette = "Reds", domain = percent_protected_tract_delta$percent_protected)
 ```
@@ -492,29 +508,60 @@ protected_pal <- colorNumeric(palette = "Reds", domain = percent_protected_tract
 leaflet() %>%
   addProviderTiles(providers$CartoDB.Positron, group = "Grey background") %>%
   addProviderTiles("Esri.WorldImagery", group = "Imagery") %>% 
+  # -------------------
+  # SOCIAL ECO STATUS
   addPolygons(group = "Socio-economic Status (CDC)", data = svi_delta,
               color = "gray", fillColor = ~pal.themes.1(RPL_THEME1), weight = 1, fillOpacity = .7,
               label = ~htmlEscape(paste("Socio-economic status:", RPL_THEME1))) %>%
+  addLegend(group = "Socio-economic Status (CDC)", data = svi_delta,
+            position = "bottomleft", pal = pal.themes.1, values = ~RPL_THEME1,
+            title = "Socio-economic Status") %>%
+  # -------------------
+  # HOUSEHOLD CHARA
   addPolygons(group = "Household Characteristics (CDC)", data = svi_delta,
               color = "gray", fillColor = ~pal.themes.2(RPL_THEME2), weight = 1, fillOpacity = .7,
               label = ~htmlEscape(paste("Household characteristics:", RPL_THEME2))) %>%
+  addLegend(group = "Household Characteristics (CDC)", data = svi_delta,
+            position = "bottomleft", pal = pal.themes.2, values = ~RPL_THEME2,
+            title = "Household Characteristics") %>%
+  # -------------------
+  # RACIAL STATUS
   addPolygons(group = "Racial & Ethnic Minority Status (CDC)", data = svi_delta,
               color = "gray", fillColor = ~pal.themes.3(RPL_THEME3), weight = 1, fillOpacity = .7,
               label = ~htmlEscape(paste("Racial and ethnic minority status:", RPL_THEME3))) %>%
+  addLegend(group = "Racial & Ethnic Minority Status (CDC)", data = svi_delta,
+            position = "bottomleft", pal = pal.themes.3, values = ~RPL_THEME3,
+            title = "Racial and Ethnic Minority Status") %>%
+  # -------------------
+  # HOUSING TYPE
   addPolygons(group = "Housing Type & Transportation (CDC)", data = svi_delta,
               color = "gray", fillColor = ~pal.themes.4(RPL_THEME4), weight = 1, fillOpacity = .7,
               label = ~htmlEscape(paste("Housing type and transportation:", RPL_THEME4))) %>%
+  addLegend(group = "Housing Type & Transportation (CDC)", data = svi_delta,
+            position = "bottomleft", pal = pal.themes.4, values = ~RPL_THEME4,
+            title = "Housing Type & Transportation") %>%
+  # -------------------
+  # OVERALL VULNERABILITY
   addPolygons(group = "Overall Vulnerability (CDC)", data = svi_delta,
               color = "gray", fillColor = ~pal.themes.5(bins), weight = 1, fillOpacity = .7,
               label = ~htmlEscape(paste0("Overall vulnerability: ", RPL_THEMES,", ", bins))) %>%
   addLegend(group = "Overall Vulnerability (CDC)", data = svi_delta,
             position = "bottomleft", pal = pal.themes.5, values = legend_order,
             title = "Overall Vulnerability") %>%
+  # -------------------
+  # CLEANUP SCORE
   addPolygons(group = "Cleanup Sites Score (CES 4.0)", data = ces_delta, 
               color = "gray", fillColor = ~pal.themes.ces(CIscore), weight = 1, fillOpacity = .8,
               label = ~htmlEscape(paste("Cleanup sites score:", CIscore))) %>%
+  addLegend(group = "Cleanup Sites Score (CES 4.0)", data = ces_delta,
+            position = "bottomleft", pal = pal.themes.ces, values = ~CIscore,
+            title = "Cleanup Sites Score") %>%
+  # -------------------
+  # STUDY BOUNDARY
   addPolygons(data = legal_eco_wgs84, 
               color = "black", fillOpacity = 0, weight = 1) %>% 
+  # -------------------
+  # RESTORATION SITES
   addCircleMarkers(group = "CNRA", data = cnra,
                    opacity = .8, fillOpacity = 0.5, weight = 2, color = "blue", radius = 7,
                    label = ~htmlEscape(paste("CNRA:", project_title))) %>%
@@ -530,47 +577,98 @@ leaflet() %>%
   addCircleMarkers(group = "SSJDC", data = ssjdc,
                    opacity = .8, fillOpacity = 0.5, weight = 2, color = "darkorange", radius = 7,
                    label = ~htmlEscape(paste("SSJDC:", project_title))) %>%
-  # adding more restoration relevant layers
+  # -------------------
+  # CPAD
   addPolygons(group = "California Protected Areas Database (CPAD)", data = cpad_delta,
               opacity = .5, weight = 1, color = "forestgreen",
               label = ~htmlEscape(paste("Name of the protected land:", UNIT_NAME))) %>%
+  # -------------------
+  # CCED
   addPolygons(group = "California Conservation Easement Database (CCED)", data = cced_delta,
               opacity = .5, weight = 1, color = "turquoise",
               label = ~htmlEscape(paste("Site name:", sitename))) %>%
+  # -------------------
+  # PERCENT PROTECTED AREA
   addPolygons(group = "Percent of Protected Area in Census Tract", data = percent_protected_tract_delta,
               opacity = .5, weight = 1, color = "gray", fillColor = ~protected_pal(percent_protected), 
               label = ~htmlEscape(paste("Percent of protected area in census tract:", percent_protected))) %>%
+  addLegend(group = "Percent of Protected Area in Census Tract", data = percent_protected_tract_delta,
+            position = "bottomleft", pal = protected_pal, values = ~percent_protected,
+            title = "Percent of Protected Area in Census Tract") %>%
+  # -------------------
+  # NOAA
   addPolygons(group = "Nationwide flood hazard (NOAA)", data = noaa_delta_combined,
               opacity = .5, weight = 1, color = ~noaa_pal(ZONE_DESIGNATION),
               label = ~htmlEscape(paste("Zone designation:", ZONE_DESIGNATION))) %>%
+  addLegend(group = "Nationwide flood hazard (NOAA)", data = noaa_delta_combined,
+            position = "bottomleft", pal = noaa_pal, values = ~ZONE_DESIGNATION,
+            title = "Nationwide flood hazard") %>%
+  # -------------------
+  # CALOEHHA
   addCircleMarkers(group = "Cleanup Sites (CalOEHHA)", data = calOEHHA_delta,
                    opacity = 1, weight = 0.5, color = "tan", radius = 5,
                    label = ~htmlEscape(paste("Cleanup site:", ADDRESS))) %>%
+  # -------------------
+  # TERREST NAT SP RICHNESS
   addPolygons(group = "Terrestrial Native Species Richness (CDFW)", data = terrest_rich_delta,
               opacity = .8, weight = 1, color = "gray", fillColor = ~terrest_rich_pal(NativeCoun),
               label = ~htmlEscape(paste("Native count:", NativeCoun))) %>%
+  addLegend(group = "Terrestrial Native Species Richness (CDFW)", data = terrest_rich_delta,
+            position = "bottomleft", pal = terrest_rich_pal, values = ~NativeCoun,
+            title = "Terrestrial Native Species Richness") %>%
+  # -------------------
+  # AQUA NAT SP RICHNESS
   addPolygons(group = "Aquatic Native Species Richness (CDFW)", data = aqua_rich_delta,
               opacity = .8, weight = 1, color = "gray", fillColor = ~aqua_rich_pal(NtvAqRankS),
               label = ~htmlEscape(paste("Native aquatic species rank:", NtvAqRankS))) %>%
+  addLegend(group = "Aquatic Native Species Richness (CDFW)", data = aqua_rich_delta,
+            position = "bottomleft", pal = aqua_rich_pal, values = ~NtvAqRankS,
+            title = "Aquatic Native Species Richness") %>%
+  # -------------------
+  # TERREST CONNECT
   addPolygons(group = "Terrestrial Connectivity (CDFW)", data = terrest_conn_delta,
               opacity = .8, weight = 1, color = "gray", fillColor = ~terrest_conn_pal(Connectivi),
               label = ~htmlEscape(paste("Connectivity rank:", Connectivi))) %>%
+  addLegend(group = "Terrestrial Connectivity (CDFW)", data = terrest_conn_delta,
+            position = "bottomleft", pal = terrest_conn_pal, values = ~Connectivi,
+            title = "Terrestrial Connectivity") %>%
+  # -------------------
+  # TERREST SIG HAB
   addPolygons(group = "Terrestrial Significant Habitats Summary (CDFW)", data = terrest_hab_delta,
               opacity = .8, weight = 1, color = "gray", fillColor = ~terrest_hab_pal(TerrHabRan),
               label = ~htmlEscape(paste("Significant terrestrial habitat rank:", TerrHabRan))) %>%
+  addLegend(group = "Terrestrial Significant Habitats Summary (CDFW)", data = terrest_hab_delta,
+            position = "bottomleft", pal = terrest_hab_pal, values = ~TerrHabRan,
+            title = "Terrestrial Significant Habitats Summary") %>%
+  # -------------------
+  # AQUA SIG HAB
   addPolygons(group = "Aquatic Significant Habitats Summary (CDFW)", data = aqua_hab_delta,
               opacity = .8, weight = 1, color = "gray", fillColor = ~aqua_hab_pal(AqHabRank),
               label = ~htmlEscape(paste("Significant aquatic habitat rank:", AqHabRank))) %>%
+  addLegend(group = "Aquatic Significant Habitats Summary (CDFW)", data = aqua_hab_delta,
+            position = "bottomleft", pal = aqua_hab_pal, values = ~AqHabRank,
+            title = "Aquatic Significant Habitats Summary") %>%
+  # -------------------
+  # PLACES
   addCircleMarkers(group = "PLACES: Census Tract Data, 2023 release (CDC)", data = places_delta,
                    opacity = 1, weight = 0.5, color = ~places_pal(mhlth_crud), radius = 5,
                    label = ~htmlEscape(paste("
 Model-based estimate for crude prevalence of frequent mental distress among adults, 2022:", mhlth_crud))) %>%
-    addPolygons(group = "Percent of Park Area in Census Tract", data = percent_park_tract_delta,
+  # -------------------
+  # PERCENT PARK AREA
+  addPolygons(group = "Percent of Park Area in Census Tract", data = percent_park_tract_delta,
               opacity = .5, weight = 1, color = "gray", fillColor = ~parks_pal(percent_park), 
               label = ~htmlEscape(paste("Percent of park area in census tract:", percent_park))) %>%
+  addLegend(group = "Percent of Park Area in Census Tract", data = percent_park_tract_delta,
+            position = "bottomleft", pal = parks_pal, values = ~percent_park,
+            title = "Percent of Park Area in Census Tract") %>%
+  # -------------------
+  # PARKS 
   addPolygons(group = "Parks With Public Access (Trust for Public Land)", data = parks_delta,
               opacity = .5, weight = 1, color = "darkseagreen",
               label = ~htmlEscape(paste("Park name:", Park_Name))) %>%
+  # -------------------
+  # LAYER CONTROL 
   addLayersControl(
     baseGroups = c("Grey background", "Imagery"),
     overlayGroups = c("CNRA",
