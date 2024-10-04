@@ -8,6 +8,8 @@ To make edits to this dashboard, first [install Quarto](https://quarto.org/docs/
 
 Make sure to provide your own [personal file path](https://github.com/Delta-Stewardship-Council/restoration_synthesis/blob/main/index.qmd#L28) to the NCEAS Restoration Box folder in order to run the code in `index.qmd`. Once you're satisfied with your edits, remember to render `index.qmd` and commit+push the resulting `index.html` file. 
 
+NOTE: Deprecated lines of code have been commented out but left in the script in case someone wanted to return to them in the future. Feel free to delete these lines if they're not useful.
+
 ## Potential next steps
 
 Here are some ideas for potential next steps for this dashboard:
